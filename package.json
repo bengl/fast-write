@@ -1,0 +1,26 @@
+{
+  "name": "fast-write",
+  "version": "1.0.0",
+  "description": "A super-fast implementation of writev",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/bengl/fast-writev.git"
+  },
+  "keywords": [
+    "fast",
+    "speed",
+    "writev",
+    "buffer",
+    "v8"
+  ],
+  "author": "Bryan English <bryan@bryanenglish.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/bengl/fast-writev/issues"
+  },
+  "homepage": "https://github.com/bengl/fast-writev#readme"
+}

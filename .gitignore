@@ -1,0 +1,8 @@
+node_modules
+Debug
+Release
+package-lock.json
+.clangd
+compile_commands.json
+build
+*.0x
