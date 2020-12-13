@@ -4,10 +4,11 @@
 #include <uv.h>
 #include <v8-fast-api-calls.h>
 #include <iostream>
+#include "liburing/src/include/liburing.h"
 
 using namespace v8;
 
-namespace writev {
+namespace writev_addon {
 
   typedef Persistent<Function, CopyablePersistentTraits<Function>> CPersistent;
 
@@ -21,6 +22,11 @@ namespace writev {
 
   uv_fs_t fsReq;
 
+  static io_uring ring;
+  static uv_poll_t poller;
+  static uv_prepare_t preparer;
+  static unsigned pending = 0;
+
   // (writeBufferArena: Buffer, callback: Function, bufferPtrs: Buffer, bufferLengths: Buffer): BigUInt64
   void setup(const FunctionCallbackInfo<Value>& args) {
     Local<Context> context = isolate->GetCurrentContext();
@@ -28,10 +34,60 @@ namespace writev {
     Local<Function> localCallback = Local<Function>::Cast(args[1]);
     callback = new Eternal<Function>(isolate, localCallback);
     uvBufsBuffer = node::Buffer::Data(args[2]->ToObject(context).ToLocalChecked());
-    loop = node::GetCurrentEventLoop(isolate);
 
     args.GetReturnValue().Set(v8::BigInt::NewFromUnsigned(isolate, (uint64_t)buffer));
   }
+
+  void OnSignal(uv_poll_t* handle, int status, int events) {
+    while (true) { // Drain the SQ
+      io_uring_cqe* cqe;
+      // Per source, this cannot return an error. (That's good because we have no
+      // particular callback to invoke with an error.)
+      io_uring_peek_cqe(&ring, &cqe);
+
+      if (!cqe) return;
+
+      io_uring_cqe_seen(&ring, cqe);
+
+      pending--;
+      if (!pending)
+        uv_poll_stop(&poller);
+
+      //Request* req = static_cast<Request*>(io_uring_cqe_get_data(cqe));
+      uint32_t cbId = ((uint64_t)io_uring_cqe_get_data(cqe) & 0xFFFFFFFF);
+
+      //if (cqe->res < 0) {
+      //  Nan::HandleScope scope;
+      //  v8::Local<v8::Value> argv[1] = { Nan::ErrnoException(-cqe->res) };
+      //  req->callback.Call(1, argv, req);
+      //} else {
+      //  Nan::HandleScope scope;
+      //  v8::Local<v8::Value> argv[3] =
+      //  { Nan::Null(), Nan::New(cqe->res), Nan::New(req->output) };
+      //  req->callback.Call(3, argv, req);
+      //}
+
+      HandleScope scope(isolate);
+      Local<Function> cb = callback->Get(isolate);
+      Local<Value> argv[2] = {
+        Number::New(isolate, (double)cbId),
+        Number::New(isolate, (double)cqe->res)
+      };
+      cb->Call(cb->CreationContext(), Undefined(isolate), 2, argv);
+
+    }
+  }
+
+  void DoSubmit(uv_prepare_t* handle) {
+    uv_prepare_stop(handle);
+    int ret = io_uring_submit(&ring);
+    if (ret < 0) {
+      fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
+    }
+    if (!uv_is_active((uv_handle_t*)&poller))
+      uv_poll_start(&poller, UV_READABLE, OnSignal);
+  }
+
 
   void fastWriteCb(uv_fs_t * fsReq) {
     if (fsReq->result < 0) {
@@ -49,11 +105,19 @@ namespace writev {
   }
 
   inline void doWrite(uint32_t fd, uint32_t cbId, uint32_t nbufs) {
-    uv_fs_t * fsReq = (uv_fs_t *)malloc(sizeof(uv_fs_t));
+    //uv_fs_t * fsReq = (uv_fs_t *)malloc(sizeof(uv_fs_t));
     uint64_t ptr = cbId;
-    fsReq->data = (void*)ptr;
-    uv_buf_t * iovs = (uv_buf_t *)uvBufsBuffer;
-    uv_fs_write(loop, fsReq, fd, iovs, nbufs, 0, fastWriteCb);
+    //fsReq->data = (void*)ptr;
+    iovec * iovs = (iovec *)uvBufsBuffer;
+    //uv_fs_write(loop, fsReq, fd, iovs, nbufs, 0, fastWriteCb);
+    io_uring_sqe* sqe = io_uring_get_sqe(&ring);
+    io_uring_prep_writev(sqe, fd, iovs, nbufs, 0);
+    io_uring_sqe_set_data(sqe, (void *)ptr);
+
+    if (!uv_is_active((uv_handle_t*)&preparer))
+      uv_prepare_start(&preparer, DoSubmit);
+
+    pending++;
   }
 
   void slowWrite(const FunctionCallbackInfo<Value>& args) {
@@ -74,6 +138,15 @@ namespace writev {
   void Init(Local<Object> exports) {
     isolate = exports->GetIsolate();
     NODE_SET_METHOD(exports, "setup", &setup);
+    
+    loop = node::GetCurrentEventLoop(isolate);
+    // TODO fixed limit here
+    int ret = io_uring_queue_init(32, &ring, 0);
+    if (ret < 0) {
+      fprintf(stderr, "queue_init: %s\n", strerror(-ret));
+    }
+    uv_poll_init(loop, &poller, ring.ring_fd);
+    uv_prepare_init(loop, &preparer);
 
     CFunction fastCFunc = CFunction::Make(fastWrite);
     Local<FunctionTemplate> funcTemplate = FunctionTemplate::New(
