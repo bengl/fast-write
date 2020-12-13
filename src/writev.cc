@@ -12,8 +12,8 @@ namespace writev {
   typedef Persistent<Function, CopyablePersistentTraits<Function>> CPersistent;
 
   void * buffer;
-  void * bufPtrBuffer;
-  void * bufLenBuffer;
+  void * uvBufsBuffer;
+
   //CPersistent callback;
   Eternal<Function> * callback;
   uv_loop_t * loop;
@@ -27,8 +27,7 @@ namespace writev {
     buffer = node::Buffer::Data(args[0]->ToObject(context).ToLocalChecked());
     Local<Function> localCallback = Local<Function>::Cast(args[1]);
     callback = new Eternal<Function>(isolate, localCallback);
-    bufPtrBuffer = node::Buffer::Data(args[2]->ToObject(context).ToLocalChecked());
-    bufLenBuffer = node::Buffer::Data(args[3]->ToObject(context).ToLocalChecked());
+    uvBufsBuffer = node::Buffer::Data(args[2]->ToObject(context).ToLocalChecked());
     loop = node::GetCurrentEventLoop(isolate);
 
     args.GetReturnValue().Set(v8::BigInt::NewFromUnsigned(isolate, (uint64_t)buffer));
@@ -53,13 +52,8 @@ namespace writev {
     uv_fs_t * fsReq = (uv_fs_t *)malloc(sizeof(uv_fs_t));
     uint64_t ptr = cbId;
     fsReq->data = (void*)ptr;
-    uv_buf_t * iovs = (uv_buf_t *)malloc(nbufs * sizeof(uv_buf_t));
-    for (uint32_t i = 0; i < nbufs; i++) {
-      // TODO maybe build up the iovs array in JavaScript
-      iovs[i] = uv_buf_init(((char **)bufPtrBuffer)[i], ((uint32_t *)bufLenBuffer)[i]);
-    }
+    uv_buf_t * iovs = (uv_buf_t *)uvBufsBuffer;
     uv_fs_write(loop, fsReq, fd, iovs, nbufs, 0, fastWriteCb);
-    free(iovs);
   }
 
   void slowWrite(const FunctionCallbackInfo<Value>& args) {

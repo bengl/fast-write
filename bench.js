@@ -4,8 +4,9 @@ const fs = require('fs');
 const fd = fs.openSync('/dev/null', 'w');
 
 const helloWorld = [Buffer.from('hello '), Buffer.from('world'), Buffer.from('\n')];
+const bigHelloWorld = [...helloWorld, ...helloWorld, ...helloWorld];
 
-const LIMIT = 1000000;
+const LIMIT = 100000;
 
 function test(name, fn, done) {
   console.time(name)
@@ -23,9 +24,9 @@ function test(name, fn, done) {
 }
 
 test('fast-writev', (cb) => {
-  writev(fd, helloWorld, cb);
+  writev(fd, bigHelloWorld, cb);
 }, () => {
   test('fs.writev', (cb) => {
-    fs.writev(fd, helloWorld, cb);
+    fs.writev(fd, bigHelloWorld, cb);
   })
 })
