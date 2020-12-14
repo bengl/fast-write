@@ -12,7 +12,8 @@ namespace writev_addon {
 
   typedef Persistent<Function, CopyablePersistentTraits<Function>> CPersistent;
 
-  void * uvBufsBuffer;
+  uint64_t * uvBufsBuffer;
+  uint32_t * uvBufLensBuffer;
 
   //CPersistent callback;
   Eternal<Function> * callback;
@@ -26,12 +27,36 @@ namespace writev_addon {
   static uv_prepare_t preparer;
   static unsigned pending = 0;
 
+  typedef struct io_data {
+    iovec * iovs;
+    uint32_t cbId;
+  } io_data;
+
+  inline io_data * init_io_data(uint32_t cbId, uint32_t nbufs) {
+    iovec * iovs = (iovec *)malloc(sizeof(iovec) * nbufs);
+    for (uint32_t i = 0; i < nbufs; i++) {
+      iovs[i].iov_base = (void *)uvBufsBuffer[i];
+      iovs[i].iov_len = uvBufLensBuffer[i];
+    }
+
+    io_data * data = (io_data *)malloc(sizeof(io_data));
+    data->iovs = iovs;
+    data->cbId = cbId;
+    return data;
+  }
+
+  void free_io_data(io_data * data) {
+    free(data->iovs);
+    free(data);
+  }
+
   // (callback: Function, bufferPtrs: Buffer, bufferLengths: Buffer): void
   void setup(const FunctionCallbackInfo<Value>& args) {
     Local<Context> context = isolate->GetCurrentContext();
     Local<Function> localCallback = Local<Function>::Cast(args[0]);
     callback = new Eternal<Function>(isolate, localCallback);
-    uvBufsBuffer = node::Buffer::Data(args[1]->ToObject(context).ToLocalChecked());
+    uvBufsBuffer = (uint64_t *)node::Buffer::Data(args[1]->ToObject(context).ToLocalChecked());
+    uvBufLensBuffer = (uint32_t *)node::Buffer::Data(args[2]->ToObject(context).ToLocalChecked());
   }
 
   void getPtr(const FunctionCallbackInfo<Value>& args) {
@@ -54,7 +79,10 @@ namespace writev_addon {
       if (!pending)
         uv_poll_stop(&poller);
 
-      uint32_t cbId = ((uint64_t)io_uring_cqe_get_data(cqe) & 0xFFFFFFFF);
+      io_data * data = (io_data *)io_uring_cqe_get_data(cqe);
+
+      uint32_t cbId = data->cbId;
+      free_io_data(data);
 
       HandleScope scope(isolate);
       Local<Function> cb = callback->Get(isolate);
@@ -94,11 +122,11 @@ namespace writev_addon {
   }
 
   inline void doWrite(uint32_t fd, uint32_t cbId, uint32_t nbufs) {
-    uint64_t ptr = cbId;
-    iovec * iovs = (iovec *)uvBufsBuffer;
+    io_data * data = init_io_data(cbId, nbufs);
+
     io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-    io_uring_prep_writev(sqe, fd, iovs, nbufs, 0);
-    io_uring_sqe_set_data(sqe, (void *)ptr);
+    io_uring_prep_writev(sqe, fd, data->iovs, nbufs, 0);
+    io_uring_sqe_set_data(sqe, data);
 
     if (!uv_is_active((uv_handle_t*)&preparer))
       uv_prepare_start(&preparer, DoSubmit);

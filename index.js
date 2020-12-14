@@ -4,10 +4,10 @@ const MICRO_OPT_LEN = 32;
 const PTR = Symbol('pointer');
 
 const writeBufferArena = Buffer.alloc(10 * 4096);
-const uvBufs = Buffer.alloc(4096);
-const uvBufs64 = new BigUint64Array(uvBufs.buffer);
-const uvBufs32 = new Uint32Array(uvBufs.buffer);
-
+const uvBufs = Buffer.alloc(1024);
+const uvBufs64 = new BigUint64Array(uvBufs.buffer, uvBufs.offset);
+const uvBufLens = Buffer.alloc(1024);
+const uvBufLens32 = new Uint32Array(uvBufLens.buffer, uvBufLens.offset);
 const cbMap = {};
 let idPool = 0;
 
@@ -17,7 +17,7 @@ function mainCallback(cbId, result) {
   cb(result);
 }
 
-binding.setup(mainCallback, uvBufs);
+binding.setup(mainCallback, uvBufs, uvBufLens);
 
 let bufMap;
 function reset() {
@@ -50,7 +50,7 @@ function writeBuf(buf, offset) {
 
 function makeBufferStruct(offset, ptr, bufLen) {
   uvBufs64[offset] = ptr;
-  uvBufs32[(2*offset)+2] = bufLen;
+  uvBufLens32[offset] = bufLen;
 }
 
 // note: this writes over the whole arena every time.
@@ -70,10 +70,10 @@ function writev(fd, bufs, cb) {
       //  reset();
       //  return writev(fd, bufs, cb);
       //}
-      makeBufferStruct(i * 2, getPointer(buf), bufLen);
+      makeBufferStruct(i, getPointer(buf), bufLen);
       //writeBuf(buf, arenaIndex);
       //arenaIndex += bufLen;
-      bufMap.set(buf, i * 2);
+      bufMap.set(buf, i);
     }
   }
   binding.writev(fd, id, bufs.length);
