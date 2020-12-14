@@ -1,7 +1,7 @@
 const writev = require('.');
 
 const fs = require('fs');
-const fd = fs.openSync('/dev/null', 'w');
+const fd = fs.openSync(process.argv[2] || '/dev/null', 'w');
 
 const helloWorld = [Buffer.from('hello '), Buffer.from('world'), Buffer.from('\n')];
 const bigHelloWorld = [...helloWorld, ...helloWorld, ...helloWorld];
@@ -23,10 +23,27 @@ function test(name, fn, done) {
   doTest(0);
 }
 
-test('fast-writev', (cb) => {
-  writev(fd, bigHelloWorld, cb);
-}, () => {
+function promisify(fn) {
+  return (...args) => {
+    return new Promise((resolve) => {
+      fn(...args, () => resolve());
+    });
+  };
+}
+
+const asyncWriteV = promisify(callback => {
+  test('fast-writev', (cb) => {
+    writev(fd, bigHelloWorld, cb);
+  }, callback);
+});
+const asyncFsWriteV = promisify(callback => {
   test('fs.writev', (cb) => {
     fs.writev(fd, bigHelloWorld, cb);
-  })
-})
+  }, callback);
+});
+
+(async () => {
+  await asyncWriteV();
+  await asyncFsWriteV();
+})();
+

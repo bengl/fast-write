@@ -12,7 +12,6 @@ namespace writev_addon {
 
   typedef Persistent<Function, CopyablePersistentTraits<Function>> CPersistent;
 
-  void * buffer;
   void * uvBufsBuffer;
 
   //CPersistent callback;
@@ -27,14 +26,16 @@ namespace writev_addon {
   static uv_prepare_t preparer;
   static unsigned pending = 0;
 
-  // (writeBufferArena: Buffer, callback: Function, bufferPtrs: Buffer, bufferLengths: Buffer): BigUInt64
+  // (callback: Function, bufferPtrs: Buffer, bufferLengths: Buffer): void
   void setup(const FunctionCallbackInfo<Value>& args) {
     Local<Context> context = isolate->GetCurrentContext();
-    buffer = node::Buffer::Data(args[0]->ToObject(context).ToLocalChecked());
-    Local<Function> localCallback = Local<Function>::Cast(args[1]);
+    Local<Function> localCallback = Local<Function>::Cast(args[0]);
     callback = new Eternal<Function>(isolate, localCallback);
-    uvBufsBuffer = node::Buffer::Data(args[2]->ToObject(context).ToLocalChecked());
+    uvBufsBuffer = node::Buffer::Data(args[1]->ToObject(context).ToLocalChecked());
+  }
 
+  void getPtr(const FunctionCallbackInfo<Value>& args) {
+    void * buffer = args[0].As<ArrayBuffer>()->GetBackingStore()->Data();
     args.GetReturnValue().Set(v8::BigInt::NewFromUnsigned(isolate, (uint64_t)buffer));
   }
 
@@ -53,19 +54,7 @@ namespace writev_addon {
       if (!pending)
         uv_poll_stop(&poller);
 
-      //Request* req = static_cast<Request*>(io_uring_cqe_get_data(cqe));
       uint32_t cbId = ((uint64_t)io_uring_cqe_get_data(cqe) & 0xFFFFFFFF);
-
-      //if (cqe->res < 0) {
-      //  Nan::HandleScope scope;
-      //  v8::Local<v8::Value> argv[1] = { Nan::ErrnoException(-cqe->res) };
-      //  req->callback.Call(1, argv, req);
-      //} else {
-      //  Nan::HandleScope scope;
-      //  v8::Local<v8::Value> argv[3] =
-      //  { Nan::Null(), Nan::New(cqe->res), Nan::New(req->output) };
-      //  req->callback.Call(3, argv, req);
-      //}
 
       HandleScope scope(isolate);
       Local<Function> cb = callback->Get(isolate);
@@ -105,11 +94,8 @@ namespace writev_addon {
   }
 
   inline void doWrite(uint32_t fd, uint32_t cbId, uint32_t nbufs) {
-    //uv_fs_t * fsReq = (uv_fs_t *)malloc(sizeof(uv_fs_t));
     uint64_t ptr = cbId;
-    //fsReq->data = (void*)ptr;
     iovec * iovs = (iovec *)uvBufsBuffer;
-    //uv_fs_write(loop, fsReq, fd, iovs, nbufs, 0, fastWriteCb);
     io_uring_sqe* sqe = io_uring_get_sqe(&ring);
     io_uring_prep_writev(sqe, fd, iovs, nbufs, 0);
     io_uring_sqe_set_data(sqe, (void *)ptr);
@@ -164,6 +150,8 @@ namespace writev_addon {
         String::NewFromUtf8(exports->GetIsolate(), "writev").ToLocalChecked(),
         funcTemplate->GetFunction(context).ToLocalChecked()
     );
+
+    NODE_SET_METHOD(exports, "getPtr", &getPtr);
   }
 
   NODE_MODULE(NODE_GYP_MODULE_NAME, Init)
