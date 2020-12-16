@@ -20,8 +20,6 @@ namespace writev_addon {
   uv_loop_t * loop;
   Isolate * isolate;
 
-  uv_fs_t fsReq;
-
   static io_uring ring;
   static uv_poll_t poller;
   static uv_prepare_t preparer;
@@ -64,7 +62,8 @@ namespace writev_addon {
     args.GetReturnValue().Set(v8::BigInt::NewFromUnsigned(isolate, (uint64_t)buffer));
   }
 
-  void OnSignal(uv_poll_t* handle, int status, int events) {
+  void onSignal(uv_poll_t* handle, int status, int events) {
+    HandleScope scope(isolate);
     while (true) { // Drain the SQ
       io_uring_cqe* cqe;
       // Per source, this cannot return an error. (That's good because we have no
@@ -84,7 +83,6 @@ namespace writev_addon {
       uint32_t cbId = data->cbId;
       free_io_data(data);
 
-      HandleScope scope(isolate);
       Local<Function> cb = callback->Get(isolate);
       Local<Value> argv[2] = {
         Number::New(isolate, (double)cbId),
@@ -95,30 +93,14 @@ namespace writev_addon {
     }
   }
 
-  void DoSubmit(uv_prepare_t* handle) {
+  void doSubmit(uv_prepare_t* handle) {
     uv_prepare_stop(handle);
     int ret = io_uring_submit(&ring);
     if (ret < 0) {
       fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
     }
     if (!uv_is_active((uv_handle_t*)&poller))
-      uv_poll_start(&poller, UV_READABLE, OnSignal);
-  }
-
-
-  void fastWriteCb(uv_fs_t * fsReq) {
-    if (fsReq->result < 0) {
-      std::cout << uv_strerror(fsReq->result) << "\n";
-    }
-    HandleScope scope(isolate);
-    uint32_t cbId = ((uint64_t)fsReq->data & 0xFFFFFFFF);
-    free(fsReq);
-    Local<Function> cb = callback->Get(isolate);
-    Local<Value> argv[2] = {
-      Number::New(isolate, (double)cbId),
-      Number::New(isolate, (double)fsReq->result)
-    };
-    cb->Call(cb->CreationContext(), Undefined(isolate), 2, argv);
+      uv_poll_start(&poller, UV_READABLE, onSignal);
   }
 
   inline void doWrite(uint32_t fd, uint32_t cbId, uint32_t nbufs) {
@@ -129,7 +111,7 @@ namespace writev_addon {
     io_uring_sqe_set_data(sqe, data);
 
     if (!uv_is_active((uv_handle_t*)&preparer))
-      uv_prepare_start(&preparer, DoSubmit);
+      uv_prepare_start(&preparer, doSubmit);
 
     pending++;
   }
