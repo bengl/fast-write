@@ -1,9 +1,7 @@
 const binding = require('./build/Release/writev.node');
 
-const MICRO_OPT_LEN = 32;
 const PTR = Symbol('pointer');
 
-const writeBufferArena = Buffer.alloc(10 * 4096);
 const uvBufs = Buffer.alloc(1024);
 const uvBufs64 = new BigUint64Array(uvBufs.buffer, uvBufs.offset);
 const uvBufLens = Buffer.alloc(1024);
@@ -19,11 +17,6 @@ function mainCallback(cbId, result) {
 
 binding.setup(mainCallback, uvBufs, uvBufLens);
 
-let bufMap;
-function reset() {
-  bufMap = new Map();
-}
-reset();
 
 function getPointer(buf, offset = 0) {
   if (buf.buffer) {
@@ -37,18 +30,7 @@ function getPointer(buf, offset = 0) {
   return pointer + BigInt(offset);
 }
 
-function writeBuf(buf, offset) {
-  const srcLen = buf.length;
-  if (srcLen > MICRO_OPT_LEN) {
-    writeBufferArena.set(buf, offset);
-  } else {
-    for (let i = 0; i < srcLen; i++) {
-      writeBufferArena[offset + i] = buf[i];
-    }
-  }
-}
-
-function makeBufferStruct(offset, ptr, bufLen) {
+function setIovecs(offset, ptr, bufLen) {
   uvBufs64[offset] = ptr;
   uvBufLens32[offset] = bufLen;
 }
@@ -59,22 +41,8 @@ function writev(fd, bufs, cb) {
   cbMap[id] = cb;
   for (let i = 0; i < bufs.length; i++) {
     const buf = bufs[i];
-    const location = bufMap.get(buf);
-    if (location) {
-      uvBufs64[i] = uvBufs64[location]
-      uvBufs64[i + 1] = uvBufs64[location + 1];
-    } else {
-      //const ptr = arenaOffset + BigInt(arenaIndex);
-      const bufLen = buf.length
-      //if (arenaIndex + bufLen > writeBufferArena.length) {
-      //  reset();
-      //  return writev(fd, bufs, cb);
-      //}
-      makeBufferStruct(i, getPointer(buf), bufLen);
-      //writeBuf(buf, arenaIndex);
-      //arenaIndex += bufLen;
-      bufMap.set(buf, i);
-    }
+    const bufLen = buf.length
+    setIovecs(i, getPointer(buf), bufLen);
   }
   binding.writev(fd, id, bufs.length);
 }
