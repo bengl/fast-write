@@ -2,7 +2,6 @@
 #include <node.h>
 #include <node_buffer.h>
 #include <uv.h>
-#include <v8-fast-api-calls.h>
 #include <iostream>
 #include "liburing/src/include/liburing.h"
 
@@ -14,6 +13,7 @@ namespace writev_addon {
 
   uint64_t * uvBufsBuffer;
   uint32_t * uvBufLensBuffer;
+  uint32_t * submissionsBuffer;
 
   //CPersistent callback;
   Eternal<Function> * callback;
@@ -30,11 +30,11 @@ namespace writev_addon {
     uint32_t cbId;
   } io_data;
 
-  inline io_data * init_io_data(uint32_t cbId, uint32_t nbufs) {
+  inline io_data * init_io_data(uint32_t cbId, uint32_t nbufs, uint32_t bufferOffset) {
     iovec * iovs = (iovec *)malloc(sizeof(iovec) * nbufs);
     for (uint32_t i = 0; i < nbufs; i++) {
-      iovs[i].iov_base = (void *)uvBufsBuffer[i];
-      iovs[i].iov_len = uvBufLensBuffer[i];
+      iovs[i].iov_base = (void *)uvBufsBuffer[bufferOffset + i];
+      iovs[i].iov_len = uvBufLensBuffer[bufferOffset + i];
     }
 
     io_data * data = (io_data *)malloc(sizeof(io_data));
@@ -55,6 +55,7 @@ namespace writev_addon {
     callback = new Eternal<Function>(isolate, localCallback);
     uvBufsBuffer = (uint64_t *)node::Buffer::Data(args[1]->ToObject(context).ToLocalChecked());
     uvBufLensBuffer = (uint32_t *)node::Buffer::Data(args[2]->ToObject(context).ToLocalChecked());
+    submissionsBuffer = (uint32_t *)node::Buffer::Data(args[3]->ToObject(context).ToLocalChecked());
   }
 
   void getPtr(const FunctionCallbackInfo<Value>& args) {
@@ -93,42 +94,37 @@ namespace writev_addon {
     }
   }
 
-  void doSubmit(uv_prepare_t* handle) {
-    uv_prepare_stop(handle);
-    int ret = io_uring_submit(&ring);
-    if (ret < 0) {
-      fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
-    }
-    if (!uv_is_active((uv_handle_t*)&poller))
-      uv_poll_start(&poller, UV_READABLE, onSignal);
-  }
-
-  inline void doWrite(uint32_t fd, uint32_t cbId, uint32_t nbufs) {
-    io_data * data = init_io_data(cbId, nbufs);
+  inline void doWrite(uint32_t fd, uint32_t cbId, uint32_t nbufs, uint32_t bufferOffset) {
+    io_data * data = init_io_data(cbId, nbufs, bufferOffset);
 
     io_uring_sqe* sqe = io_uring_get_sqe(&ring);
     io_uring_prep_writev(sqe, fd, data->iovs, nbufs, 0);
     io_uring_sqe_set_data(sqe, data);
 
-    if (!uv_is_active((uv_handle_t*)&preparer))
-      uv_prepare_start(&preparer, doSubmit);
-
     pending++;
   }
 
-  void slowWrite(const FunctionCallbackInfo<Value>& args) {
-    // std::cout << "Slow Call\n";
-    Local<Context> context = isolate->GetCurrentContext();
-    return doWrite(
-        args[0]->ToUint32(context).ToLocalChecked()->Value(),
-        args[1]->ToUint32(context).ToLocalChecked()->Value(),
-        args[2]->ToUint32(context).ToLocalChecked()->Value()
-    );
-  }
-
-  void fastWrite(v8::ApiObject receiver, uint32_t fd, uint32_t cbId, uint32_t nbufs) {
-    // std::cout << "Fast Call\n";
-    return doWrite(fd, cbId, nbufs);
+  void checkForSubmissions(uv_prepare_t* handle) {
+    // uv_prepare_stop(handle);
+    int pendingSubs = submissionsBuffer[0];
+    int bufferOffset = 0;
+    std::cout << "pendingSubs " << pendingSubs << "\n";
+    if (pendingSubs > 0) {
+      for (int i = 0; i < pendingSubs; i++) {
+        int fd = submissionsBuffer[1 + (i * 3)];
+        int cbId = submissionsBuffer[2 + (i * 3)];
+        int nbufs = submissionsBuffer[3 + (i * 3)];
+        doWrite(fd, cbId, nbufs, bufferOffset);
+        bufferOffset += nbufs;
+      }
+      int ret = io_uring_submit(&ring);
+      if (ret < 0) {
+        fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
+      }
+      submissionsBuffer[0] = 0;
+      if (!uv_is_active((uv_handle_t*)&poller))
+        uv_poll_start(&poller, UV_READABLE, onSignal);
+    }
   }
 
   void Init(Local<Object> exports) {
@@ -137,29 +133,14 @@ namespace writev_addon {
     
     loop = node::GetCurrentEventLoop(isolate);
     // TODO fixed limit here
-    int ret = io_uring_queue_init(32, &ring, 0);
+    int ret = io_uring_queue_init(1024, &ring, 0);
     if (ret < 0) {
       fprintf(stderr, "queue_init: %s\n", strerror(-ret));
     }
     uv_poll_init(loop, &poller, ring.ring_fd);
     uv_prepare_init(loop, &preparer);
-
-    CFunction fastCFunc = CFunction::Make(fastWrite);
-    Local<FunctionTemplate> funcTemplate = FunctionTemplate::New(
-        isolate, slowWrite,
-        Local<Value>(),
-        Local<v8::Signature>(),
-        0,
-        v8::ConstructorBehavior::kThrow,
-        v8::SideEffectType::kHasSideEffect,
-        &fastCFunc
-    );
-    Local<Context> context = isolate->GetCurrentContext();
-    exports->Set(
-        context,
-        String::NewFromUtf8(exports->GetIsolate(), "writev").ToLocalChecked(),
-        funcTemplate->GetFunction(context).ToLocalChecked()
-    );
+    uv_prepare_start(&preparer, checkForSubmissions);
+    uv_unref((uv_handle_t *)&preparer);
 
     NODE_SET_METHOD(exports, "getPtr", &getPtr);
   }
