@@ -105,10 +105,8 @@ namespace writev_addon {
   }
 
   void checkForSubmissions(uv_prepare_t* handle) {
-    // uv_prepare_stop(handle);
     int pendingSubs = submissionsBuffer[0];
     int bufferOffset = 0;
-    std::cout << "pendingSubs " << pendingSubs << "\n";
     if (pendingSubs > 0) {
       for (int i = 0; i < pendingSubs; i++) {
         int fd = submissionsBuffer[1 + (i * 3)];
@@ -127,6 +125,10 @@ namespace writev_addon {
     }
   }
 
+  void prepareStop(const FunctionCallbackInfo<Value>& args) {
+    uv_prepare_stop(&preparer);
+  }
+
   void Init(Local<Object> exports) {
     isolate = exports->GetIsolate();
     NODE_SET_METHOD(exports, "setup", &setup);
@@ -140,9 +142,9 @@ namespace writev_addon {
     uv_poll_init(loop, &poller, ring.ring_fd);
     uv_prepare_init(loop, &preparer);
     uv_prepare_start(&preparer, checkForSubmissions);
-    uv_unref((uv_handle_t *)&preparer);
 
     NODE_SET_METHOD(exports, "getPtr", &getPtr);
+    NODE_SET_METHOD(exports, "prepareStop", &prepareStop);
   }
 
   NODE_MODULE(NODE_GYP_MODULE_NAME, Init)

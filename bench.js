@@ -6,21 +6,21 @@ const fd = fs.openSync(process.argv[2] || '/dev/null', 'w');
 const helloWorld = [Buffer.from('hello '), Buffer.from('world'), Buffer.from('\n')];
 const bigHelloWorld = [...helloWorld, ...helloWorld, ...helloWorld];
 
+const ITERATIONS = 100;
 const PARALLELISM = 10;
-const LIMIT = 18;
 
 function test(name, fn, done) {
   console.time(name)
-  function doTest(i) {
-    let count = 0;
+  function doTest(count) {
     for (let i = 0; i < PARALLELISM; i++) {
       fn(() => {
-        console.log('cb', i, 'called');
-        if (++count === LIMIT - 1) {
-          console.timeEnd(name);
-          done && done();
-        } else {
-          doTest(i+1)
+        if (i === PARALLELISM - 1) {
+          if (count >= ITERATIONS - 1) {
+            console.timeEnd(name);
+            done && done();
+          } else  {
+            doTest(count + PARALLELISM);
+          }
         }
       });
     }
@@ -48,7 +48,8 @@ const asyncFsWriteV = promisify(callback => {
 });
 
 (async () => {
-  //await asyncFsWriteV();
+  await asyncFsWriteV();
   await asyncWriteV();
+  writev.prepareStop();
 })();
 

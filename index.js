@@ -39,9 +39,13 @@ function setIovecs(offset, ptr, bufLen) {
 
 // note: this writes over the whole arena every time.
 function writev(fd, bufs, cb) {
+  let len = submissions32[0];
+  if (len > 900) {
+    setImmediate(() => writev(fd, bufs, cb));
+    return;
+  }
   const id = idPool++;
   cbMap.set(id, cb);
-  let len = submissions32[0];
   if (len === 0) {
     bufsOffset = 0;
   }
@@ -59,8 +63,8 @@ function writev(fd, bufs, cb) {
   submissions32[3 + (len * 3)] = bufs.length;
 
   submissions32[0] = len + 1;
-  console.log('added 1 to pendingSubs', submissions32[0], 'for cbId', id);
-  //setImmediate(() => {});
 }
+
+writev.prepareStop = binding.prepareStop;
 
 module.exports = writev;

@@ -16,4 +16,5 @@ writev(fd, helloWorld, () => {
   assert.strictEqual(results, 'hello world\n');
   fs.unlinkSync(filename);
   fs.rmdirSync(dir);
+  writev.prepareStop();
 });
