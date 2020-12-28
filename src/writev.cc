@@ -26,29 +26,6 @@ namespace writev_addon {
   static uv_prepare_t preparer;
   static unsigned pending = 0;
 
-  typedef struct io_data {
-    iovec * iovs;
-    uint32_t cbId;
-  } io_data;
-
-  inline io_data * init_io_data(uint32_t cbId, uint32_t nbufs, uint32_t bufferOffset) {
-    iovec * iovs = (iovec *)malloc(sizeof(iovec) * nbufs);
-    for (uint32_t i = 0; i < nbufs; i++) {
-      iovs[i].iov_base = (void *)uvBufsBuffer[bufferOffset + i];
-      iovs[i].iov_len = uvBufLensBuffer[bufferOffset + i];
-    }
-
-    io_data * data = (io_data *)malloc(sizeof(io_data));
-    data->iovs = iovs;
-    data->cbId = cbId;
-    return data;
-  }
-
-  void free_io_data(io_data * data) {
-    free(data->iovs);
-    free(data);
-  }
-
   // (callback, uvBufsBuffer, uvBufLensBuffer, submissionsBuffer, resultBuffer): void
   void setup(const FunctionCallbackInfo<Value>& args) {
     Local<Context> context = isolate->GetCurrentContext();
@@ -81,10 +58,7 @@ namespace writev_addon {
       if (!pending)
         uv_poll_stop(&poller);
 
-      io_data * data = (io_data *)io_uring_cqe_get_data(cqe);
-
-      uint32_t cbId = data->cbId;
-      free_io_data(data);
+      uint32_t cbId = (uint64_t)io_uring_cqe_get_data(cqe) & 0xFFFFFFFF;
 
       resultBuffer[1 + (id * 2)] = (double)cbId;
       resultBuffer[2 + (id * 2)] = (double)cqe->res;
@@ -101,11 +75,12 @@ namespace writev_addon {
   }
 
   inline void doWrite(uint32_t fd, uint32_t cbId, uint32_t nbufs, uint32_t bufferOffset) {
-    io_data * data = init_io_data(cbId, nbufs, bufferOffset);
+    iovec * iovs = (iovec *)&uvBufsBuffer[bufferOffset];
 
     io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-    io_uring_prep_writev(sqe, fd, data->iovs, nbufs, 0);
-    io_uring_sqe_set_data(sqe, data);
+    io_uring_prep_writev(sqe, fd, iovs, nbufs, 0);
+    uint64_t cbIdPtr = cbId;
+    io_uring_sqe_set_data(sqe, (void *)cbIdPtr);
 
     pending++;
   }
@@ -115,11 +90,12 @@ namespace writev_addon {
     int bufferOffset = 0;
     if (pendingSubs > 0) {
       for (int i = 0; i < pendingSubs; i++) {
-        int fd = submissionsBuffer[1 + (i * 3)];
-        int cbId = submissionsBuffer[2 + (i * 3)];
-        int nbufs = submissionsBuffer[3 + (i * 3)];
+        int subOffset = i * 3;
+        int fd = submissionsBuffer[1 + subOffset];
+        int cbId = submissionsBuffer[2 + subOffset];
+        int nbufs = submissionsBuffer[3 + subOffset];
         doWrite(fd, cbId, nbufs, bufferOffset);
-        bufferOffset += nbufs;
+        bufferOffset += nbufs * 2;
       }
       int ret = io_uring_submit(&ring);
       if (ret < 0) {

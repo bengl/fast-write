@@ -6,7 +6,7 @@ const fd = fs.openSync(process.argv[2] || '/dev/null', 'w');
 const helloWorld = [Buffer.from('hello '), Buffer.from('world'), Buffer.from('\n')];
 const bigHelloWorld = [...helloWorld, ...helloWorld, ...helloWorld];
 
-const ITERATIONS = 100;
+const ITERATIONS = 1000000;
 const PARALLELISM = 10;
 
 function test(name, fn, done) {

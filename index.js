@@ -4,6 +4,7 @@ const PTR = Symbol('pointer');
 
 const uvBufs = Buffer.alloc(1024);
 const uvBufs64 = new BigUint64Array(uvBufs.buffer, uvBufs.offset);
+const uvBufs32 = new Uint32Array(uvBufs.buffer, uvBufs.offset);
 const uvBufLens = Buffer.alloc(1024);
 const uvBufLens32 = new Uint32Array(uvBufLens.buffer, uvBufLens.offset);
 const submissions = Buffer.alloc(4096); // [len, fd0, cbId0, count0, fd1, cbId1, count1, fd2, cbId2, count2, ...]
@@ -18,7 +19,7 @@ function mainCallback() {
   const resultCount = resultBuffer32[0];
   for (let i = 0; i < resultCount; i++) {
     const cbId = resultBuffer32[1 + (i * 2)];
-    const result = resultBuffer[2 + (i + 2)];
+    const result = resultBuffer[2 + (i * 2)];
     const cb = cbMap.get(cbId);
     cbMap.delete(cbId);
     cb(result);
@@ -31,17 +32,17 @@ function getPointer(buf, offset = 0) {
   if (buf.buffer) {
     return getPointer(buf.buffer, buf.offset)
   }
-  if (buf[PTR]) {
-    return buf[PTR] + BigInt(offset);
+  let pointer = buf[PTR];
+  if (!pointer) {
+    pointer = binding.getPtr(buf);
+    buf[PTR] = pointer;
   }
-  const pointer = binding.getPtr(buf);
-  buf[PTR] = pointer;
-  return pointer + BigInt(offset);
+  return offset ? pointer + BigInt(offset) : pointer;
 }
 
 function setIovecs(offset, ptr, bufLen) {
   uvBufs64[offset] = ptr;
-  uvBufLens32[offset] = bufLen;
+  uvBufs32[2 * offset + 2] = bufLen;
 }
 
 function writev(fd, bufs, cb) {
@@ -59,10 +60,10 @@ function writev(fd, bufs, cb) {
   for (let i = 0; i < bufs.length; i++) {
     const buf = bufs[i];
     const bufLen = buf.length
-    setIovecs(bufsOffset + i, getPointer(buf), bufLen);
+    setIovecs(bufsOffset + 2 * i, getPointer(buf), bufLen);
   }
 
-  bufsOffset += bufs.length;
+  bufsOffset += bufs.length * 2 ;
 
   submissions32[1 + (len * 3)] = fd;
   submissions32[2 + (len * 3)] = id;
