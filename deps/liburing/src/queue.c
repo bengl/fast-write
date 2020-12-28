@@ -25,10 +25,11 @@ static inline bool sq_ring_needs_enter(struct io_uring *ring, unsigned *flags)
 {
 	if (!(ring->flags & IORING_SETUP_SQPOLL))
 		return true;
-	if (IO_URING_READ_ONCE(*ring->sq.kflags) & IORING_SQ_NEED_WAKEUP) {
-		*flags |= IORING_ENTER_SQ_WAKEUP;
-		return true;
-	}
+    if (uring_unlikely(IO_URING_READ_ONCE(*ring->sq.kflags) &
+                       IORING_SQ_NEED_WAKEUP)) {
+        *flags |= IORING_ENTER_SQ_WAKEUP;
+        return true;
+    }
 
 	return false;
 }
@@ -224,6 +225,17 @@ int __io_uring_flush_sq(struct io_uring *ring)
 	 */
 	io_uring_smp_store_release(sq->ktail, ktail);
 out:
+	/*
+	 * This _may_ look problematic, as we're not supposed to be reading
+	 * SQ->head without acquire semantics. When we're in SQPOLL mode, the
+	 * kernel submitter could be updating this right now. For non-SQPOLL,
+	 * task itself does it, and there's no potential face. But even for
+	 * SQPOLL, the load is going to be potentially out-of-date the very
+	 * instant it's done, regardless or whether or not it's done
+	 * atomically. Worst case, we're going to be over-estimating what
+	 * we can submit. The point is, we need to be able to deal with this
+	 * situation regardless of any perceived atomicity.
+	 */
 	return ktail - *sq->khead;
 }
 

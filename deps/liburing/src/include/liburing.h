@@ -15,6 +15,14 @@
 #include "liburing/io_uring.h"
 #include "liburing/barrier.h"
 
+#ifndef uring_unlikely
+#  define uring_unlikely(cond)      __builtin_expect(!!(cond), 0)
+#endif
+
+#ifndef uring_likely
+#  define uring_likely(cond)        __builtin_expect(!!(cond), 1)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -331,7 +339,8 @@ static inline void io_uring_prep_timeout_update(struct io_uring_sqe *sqe,
 						__u64 user_data, unsigned flags)
 {
 	io_uring_prep_rw(IORING_OP_TIMEOUT_REMOVE, sqe, -1,
-				(void *)(unsigned long)user_data, 0, (__u64)ts);
+				(void *)(unsigned long)user_data, 0,
+				(uintptr_t)ts);
 	sqe->timeout_flags = flags | IORING_TIMEOUT_UPDATE;
 }
 
