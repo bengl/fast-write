@@ -14,6 +14,7 @@ namespace writev_addon {
   uint64_t * uvBufsBuffer;
   uint32_t * uvBufLensBuffer;
   uint32_t * submissionsBuffer;
+  uint32_t * resultBuffer;
 
   //CPersistent callback;
   Eternal<Function> * callback;
@@ -48,7 +49,7 @@ namespace writev_addon {
     free(data);
   }
 
-  // (callback: Function, bufferPtrs: Buffer, bufferLengths: Buffer): void
+  // (callback, uvBufsBuffer, uvBufLensBuffer, submissionsBuffer, resultBuffer): void
   void setup(const FunctionCallbackInfo<Value>& args) {
     Local<Context> context = isolate->GetCurrentContext();
     Local<Function> localCallback = Local<Function>::Cast(args[0]);
@@ -56,6 +57,7 @@ namespace writev_addon {
     uvBufsBuffer = (uint64_t *)node::Buffer::Data(args[1]->ToObject(context).ToLocalChecked());
     uvBufLensBuffer = (uint32_t *)node::Buffer::Data(args[2]->ToObject(context).ToLocalChecked());
     submissionsBuffer = (uint32_t *)node::Buffer::Data(args[3]->ToObject(context).ToLocalChecked());
+    resultBuffer = (uint32_t *)node::Buffer::Data(args[4]->ToObject(context).ToLocalChecked());
   }
 
   void getPtr(const FunctionCallbackInfo<Value>& args) {
@@ -64,14 +66,14 @@ namespace writev_addon {
   }
 
   void onSignal(uv_poll_t* handle, int status, int events) {
-    HandleScope scope(isolate);
-    while (true) { // Drain the SQ
-      io_uring_cqe* cqe;
+    int id = 0;
+    io_uring_cqe* cqe;
+    while (id == 0 || cqe) { // Drain the SQ
       // Per source, this cannot return an error. (That's good because we have no
       // particular callback to invoke with an error.)
       io_uring_peek_cqe(&ring, &cqe);
 
-      if (!cqe) return;
+      if (!cqe) break;
 
       io_uring_cqe_seen(&ring, cqe);
 
@@ -84,14 +86,18 @@ namespace writev_addon {
       uint32_t cbId = data->cbId;
       free_io_data(data);
 
-      Local<Function> cb = callback->Get(isolate);
-      Local<Value> argv[2] = {
-        Number::New(isolate, (double)cbId),
-        Number::New(isolate, (double)cqe->res)
-      };
-      cb->Call(cb->CreationContext(), Undefined(isolate), 2, argv);
-
+      resultBuffer[1 + (id * 2)] = (double)cbId;
+      resultBuffer[2 + (id * 2)] = (double)cqe->res;
+      id += 1;
     }
+    if (!id) {
+      return;
+    }
+    resultBuffer[0] = (double)id;
+    HandleScope scope(isolate);
+    Local<Function> cb = callback->Get(isolate);
+    cb->Call(cb->CreationContext(), Undefined(isolate), 0, NULL);
+
   }
 
   inline void doWrite(uint32_t fd, uint32_t cbId, uint32_t nbufs, uint32_t bufferOffset) {

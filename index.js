@@ -8,17 +8,24 @@ const uvBufLens = Buffer.alloc(1024);
 const uvBufLens32 = new Uint32Array(uvBufLens.buffer, uvBufLens.offset);
 const submissions = Buffer.alloc(4096); // [len, fd0, cbId0, count0, fd1, cbId1, count1, fd2, cbId2, count2, ...]
 const submissions32 = new Uint32Array(submissions.buffer, submissions.offset);
+const resultBuffer = Buffer.alloc(4096);
+const resultBuffer32 = new Uint32Array(resultBuffer.buffer, resultBuffer.offset);
 const cbMap = new Map();
 let idPool = 0;
 let bufsOffset = 0;
 
-function mainCallback(cbId, result) {
-  const cb = cbMap.get(cbId);
-  cbMap.delete(cbId);
-  cb(result);
+function mainCallback() {
+  const resultCount = resultBuffer32[0];
+  for (let i = 0; i < resultCount; i++) {
+    const cbId = resultBuffer32[1 + (i * 2)];
+    const result = resultBuffer[2 + (i + 2)];
+    const cb = cbMap.get(cbId);
+    cbMap.delete(cbId);
+    cb(result);
+  }
 }
 
-binding.setup(mainCallback, uvBufs, uvBufLens, submissions);
+binding.setup(mainCallback, uvBufs, uvBufLens, submissions, resultBuffer);
 
 function getPointer(buf, offset = 0) {
   if (buf.buffer) {
@@ -37,7 +44,6 @@ function setIovecs(offset, ptr, bufLen) {
   uvBufLens32[offset] = bufLen;
 }
 
-// note: this writes over the whole arena every time.
 function writev(fd, bufs, cb) {
   let len = submissions32[0];
   if (len > 900) {
