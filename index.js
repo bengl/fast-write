@@ -1,12 +1,13 @@
 const binding = require('./build/Release/writev.node');
+const private = require('./lib/private');
 
-const PTR = Symbol('pointer');
+const PTR = private('pointer');
+const { getPtr } = binding;
+delete binding.getPtr;
 
 const uvBufs = Buffer.alloc(1024);
 const uvBufs64 = new BigUint64Array(uvBufs.buffer, uvBufs.offset);
 const uvBufs32 = new Uint32Array(uvBufs.buffer, uvBufs.offset);
-const uvBufLens = Buffer.alloc(1024);
-const uvBufLens32 = new Uint32Array(uvBufLens.buffer, uvBufLens.offset);
 const submissions = Buffer.alloc(4096); // [len, fd0, cbId0, count0, fd1, cbId1, count1, fd2, cbId2, count2, ...]
 const submissions32 = new Uint32Array(submissions.buffer, submissions.offset);
 const resultBuffer = Buffer.alloc(4096);
@@ -26,7 +27,7 @@ function mainCallback() {
   }
 }
 
-binding.setup(mainCallback, uvBufs, uvBufLens, submissions, resultBuffer);
+binding.setup(mainCallback, uvBufs, submissions, resultBuffer);
 
 function getPointer(buf, offset = 0) {
   if (buf.buffer) {
@@ -34,7 +35,7 @@ function getPointer(buf, offset = 0) {
   }
   let pointer = buf[PTR];
   if (!pointer) {
-    pointer = binding.getPtr(buf);
+    pointer = getPtr(buf);
     buf[PTR] = pointer;
   }
   return offset ? pointer + BigInt(offset) : pointer;

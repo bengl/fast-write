@@ -1,4 +1,5 @@
 #include "v8.h"
+#include <bits/stdint-uintn.h>
 #include <node.h>
 #include <node_buffer.h>
 #include <uv.h>
@@ -9,14 +10,19 @@ using namespace v8;
 
 namespace writev_addon {
 
-  typedef Persistent<Function, CopyablePersistentTraits<Function>> CPersistent;
+  #pragma pack(1)
+  struct js_submission {
+    uint32_t fd;
+    uint32_t cbId;
+    uint32_t count;
+  };
 
   uint64_t * uvBufsBuffer;
-  uint32_t * uvBufLensBuffer;
   uint32_t * submissionsBuffer;
+  uint32_t * pendingSubs;
+  struct js_submission * subs;
   uint32_t * resultBuffer;
 
-  //CPersistent callback;
   Eternal<Function> * callback;
   uv_loop_t * loop;
   Isolate * isolate;
@@ -26,15 +32,16 @@ namespace writev_addon {
   static uv_prepare_t preparer;
   static unsigned pending = 0;
 
+
   // (callback, uvBufsBuffer, uvBufLensBuffer, submissionsBuffer, resultBuffer): void
   void setup(const FunctionCallbackInfo<Value>& args) {
     Local<Context> context = isolate->GetCurrentContext();
     Local<Function> localCallback = Local<Function>::Cast(args[0]);
     callback = new Eternal<Function>(isolate, localCallback);
     uvBufsBuffer = (uint64_t *)node::Buffer::Data(args[1]->ToObject(context).ToLocalChecked());
-    uvBufLensBuffer = (uint32_t *)node::Buffer::Data(args[2]->ToObject(context).ToLocalChecked());
-    submissionsBuffer = (uint32_t *)node::Buffer::Data(args[3]->ToObject(context).ToLocalChecked());
-    resultBuffer = (uint32_t *)node::Buffer::Data(args[4]->ToObject(context).ToLocalChecked());
+    pendingSubs = (uint32_t *)node::Buffer::Data(args[2]->ToObject(context).ToLocalChecked());
+    subs = (struct js_submission *)(pendingSubs + 1);
+    resultBuffer = (uint32_t *)node::Buffer::Data(args[3]->ToObject(context).ToLocalChecked());
   }
 
   void getPtr(const FunctionCallbackInfo<Value>& args) {
@@ -86,22 +93,19 @@ namespace writev_addon {
   }
 
   void checkForSubmissions(uv_prepare_t* handle) {
-    int pendingSubs = submissionsBuffer[0];
+
     int bufferOffset = 0;
-    if (pendingSubs > 0) {
-      for (int i = 0; i < pendingSubs; i++) {
-        int subOffset = i * 3;
-        int fd = submissionsBuffer[1 + subOffset];
-        int cbId = submissionsBuffer[2 + subOffset];
-        int nbufs = submissionsBuffer[3 + subOffset];
-        doWrite(fd, cbId, nbufs, bufferOffset);
-        bufferOffset += nbufs * 2;
+    if (*pendingSubs > 0) {
+      for (int i = 0; i < *pendingSubs; i++) {
+        struct js_submission * sub = subs + i;
+        doWrite(sub->fd, sub->cbId, sub->count, bufferOffset);
+        bufferOffset += sub->count * 2;
       }
       int ret = io_uring_submit(&ring);
       if (ret < 0) {
         fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
       }
-      submissionsBuffer[0] = 0;
+      *pendingSubs = 0;
       if (!uv_is_active((uv_handle_t*)&poller))
         uv_poll_start(&poller, UV_READABLE, onSignal);
     }
