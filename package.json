@@ -22,5 +22,8 @@
   "bugs": {
     "url": "https://github.com/bengl/fast-writev/issues"
   },
-  "homepage": "https://github.com/bengl/fast-writev#readme"
+  "homepage": "https://github.com/bengl/fast-writev#readme",
+  "devDependencies": {
+    "pitesti": "^3.0.0"
+  }
 }

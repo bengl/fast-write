@@ -21,7 +21,7 @@ namespace writev_addon {
   uint32_t * submissionsBuffer;
   uint32_t * pendingSubs;
   struct js_submission * subs;
-  uint32_t * resultBuffer;
+  int32_t * resultBuffer;
 
   Eternal<Function> * callback;
   uv_loop_t * loop;
@@ -41,7 +41,7 @@ namespace writev_addon {
     uvBufsBuffer = (uint64_t *)node::Buffer::Data(args[1]->ToObject(context).ToLocalChecked());
     pendingSubs = (uint32_t *)node::Buffer::Data(args[2]->ToObject(context).ToLocalChecked());
     subs = (struct js_submission *)(pendingSubs + 1);
-    resultBuffer = (uint32_t *)node::Buffer::Data(args[3]->ToObject(context).ToLocalChecked());
+    resultBuffer = (int32_t *)node::Buffer::Data(args[3]->ToObject(context).ToLocalChecked());
   }
 
   void getPtr(const FunctionCallbackInfo<Value>& args) {
@@ -67,8 +67,8 @@ namespace writev_addon {
 
       uint32_t cbId = (uint64_t)io_uring_cqe_get_data(cqe) & 0xFFFFFFFF;
 
-      resultBuffer[1 + (id * 2)] = (double)cbId;
-      resultBuffer[2 + (id * 2)] = (double)cqe->res;
+      resultBuffer[1 + (id * 2)] = cbId;
+      resultBuffer[2 + (id * 2)] = cqe->res;
       id += 1;
     }
     if (!id) {
@@ -77,7 +77,7 @@ namespace writev_addon {
     resultBuffer[0] = (double)id;
     HandleScope scope(isolate);
     Local<Function> cb = callback->Get(isolate);
-    cb->Call(cb->CreationContext(), Undefined(isolate), 0, NULL);
+    (void)cb->Call(cb->CreationContext(), Undefined(isolate), 0, NULL);
 
   }
 
@@ -85,7 +85,7 @@ namespace writev_addon {
     iovec * iovs = (iovec *)&uvBufsBuffer[bufferOffset];
 
     io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-    io_uring_prep_writev(sqe, fd, iovs, nbufs, 0);
+    io_uring_prep_writev(sqe, fd, iovs, nbufs, -1);
     uint64_t cbIdPtr = cbId;
     io_uring_sqe_set_data(sqe, (void *)cbIdPtr);
 
@@ -94,9 +94,9 @@ namespace writev_addon {
 
   void checkForSubmissions(uv_prepare_t* handle) {
 
-    int bufferOffset = 0;
+    uint32_t bufferOffset = 0;
     if (*pendingSubs > 0) {
-      for (int i = 0; i < *pendingSubs; i++) {
+      for (uint32_t i = 0; i < *pendingSubs; i++) {
         struct js_submission * sub = subs + i;
         doWrite(sub->fd, sub->cbId, sub->count, bufferOffset);
         bufferOffset += sub->count * 2;

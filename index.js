@@ -5,13 +5,15 @@ const PTR = private('pointer');
 const { getPtr } = binding;
 delete binding.getPtr;
 
+const uvErrMap = process.binding('uv').getErrorMap();
+
 const uvBufs = Buffer.alloc(1024);
 const uvBufs64 = new BigUint64Array(uvBufs.buffer, uvBufs.offset);
 const uvBufs32 = new Uint32Array(uvBufs.buffer, uvBufs.offset);
 const submissions = Buffer.alloc(4096); // [len, fd0, cbId0, count0, fd1, cbId1, count1, fd2, cbId2, count2, ...]
 const submissions32 = new Uint32Array(submissions.buffer, submissions.offset);
 const resultBuffer = Buffer.alloc(4096);
-const resultBuffer32 = new Uint32Array(resultBuffer.buffer, resultBuffer.offset);
+const resultBuffer32 = new Int32Array(resultBuffer.buffer, resultBuffer.offset);
 const cbMap = new Map();
 let idPool = 0;
 let bufsOffset = 0;
@@ -20,10 +22,16 @@ function mainCallback() {
   const resultCount = resultBuffer32[0];
   for (let i = 0; i < resultCount; i++) {
     const cbId = resultBuffer32[1 + (i * 2)];
-    const result = resultBuffer[2 + (i * 2)];
+    const result = resultBuffer32[2 + (i * 2)];
     const cb = cbMap.get(cbId);
     cbMap.delete(cbId);
-    cb(result);
+    if (result < 0) {
+      const [code, uvmsg] = uvErrMap.get(result);
+      const err = new Error(`${code}: ${uvmsg}`);
+      cb(err);
+
+    }
+    cb(null, result);
   }
 }
 
