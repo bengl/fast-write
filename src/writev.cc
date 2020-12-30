@@ -15,6 +15,7 @@ namespace writev_addon {
     uint32_t fd;
     uint32_t cbId;
     uint32_t count;
+    int32_t offset;
   };
 
   uint64_t * uvBufsBuffer;
@@ -81,12 +82,12 @@ namespace writev_addon {
 
   }
 
-  inline void doWrite(uint32_t fd, uint32_t cbId, uint32_t nbufs, uint32_t bufferOffset) {
+  inline void doWrite(js_submission * sub, uint32_t bufferOffset) {
     iovec * iovs = (iovec *)&uvBufsBuffer[bufferOffset];
 
     io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-    io_uring_prep_writev(sqe, fd, iovs, nbufs, -1);
-    uint64_t cbIdPtr = cbId;
+    io_uring_prep_writev(sqe, sub->fd, iovs, sub->count, sub->offset);
+    uint64_t cbIdPtr = sub->cbId;
     io_uring_sqe_set_data(sqe, (void *)cbIdPtr);
 
     pending++;
@@ -98,7 +99,7 @@ namespace writev_addon {
     if (*pendingSubs > 0) {
       for (uint32_t i = 0; i < *pendingSubs; i++) {
         struct js_submission * sub = subs + i;
-        doWrite(sub->fd, sub->cbId, sub->count, bufferOffset);
+        doWrite(sub, bufferOffset);
         bufferOffset += sub->count * 2;
       }
       int ret = io_uring_submit(&ring);

@@ -54,7 +54,7 @@ function setIovecs(offset, ptr, bufLen) {
   uvBufs32[2 * offset + 2] = bufLen;
 }
 
-function writev(fd, bufs, cb) {
+function _writev(fd, bufs, offset, cb) {
   let len = submissions32[0];
   if (len > 900) {
     setImmediate(() => writev(fd, bufs, cb));
@@ -74,11 +74,20 @@ function writev(fd, bufs, cb) {
 
   bufsOffset += bufs.length * 2 ;
 
-  submissions32[1 + (len * 3)] = fd;
-  submissions32[2 + (len * 3)] = id;
-  submissions32[3 + (len * 3)] = bufs.length;
+  submissions32[1 + (len * 4)] = fd;
+  submissions32[2 + (len * 4)] = id;
+  submissions32[3 + (len * 4)] = bufs.length;
+  submissions32[4 + (len * 4)] = offset;
 
   submissions32[0] = len + 1;
+}
+
+function writev (fd, bufs, offset, cb) {
+  if (typeof offset === 'function') {
+    cb = offset;
+    offset = -1;
+  }
+  _writev(fd, bufs, offset, cb);
 }
 
 writev.prepareStop = binding.prepareStop;

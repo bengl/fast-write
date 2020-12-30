@@ -43,10 +43,14 @@ sure you're never going to call `writev` again in your program. If you don't,
 the event loop will stay alive due to `uv_prepare_t` handle that checks for
 submissions on each libuv tick.
 
+In addition to the fd number and buffers, you can also give a third argument,
+which is the offset, as would be used in
+[`pwritev(2)`](https://linux.die.net/man/2/pwritev). When writing to a socket,
+this should be set to 0. The default is -1.
 
 ## TODO
 
 * [ ] Docs
-* [ ] Writev at offsets
+* [x] Writev at offsets
 * [ ] Readv
 * [ ] Interact with sqe and cqe directly from JavaScript

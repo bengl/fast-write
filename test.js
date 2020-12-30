@@ -1,6 +1,7 @@
 const pitesti = require('pitesti');
 const assert = require('assert');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const writev = require('.');
 
@@ -9,8 +10,8 @@ const goodbyeWorld = [Buffer.from('goodbye '), Buffer.from('world'), Buffer.from
 
 const test = pitesti();
 
-const aWritev = (fd, buffers) => new Promise((resolve, reject) => {
-  writev(fd, buffers, (err, result) => {
+const aWritev = (...args) => new Promise((resolve, reject) => {
+  writev(...args, (err, result) => {
     if (err) reject(err);
     else resolve(result);
   })
@@ -62,6 +63,31 @@ test`write stuff in parallel to a file`(async () => {
   // same offset.
   fs.unlinkSync(filename);
   fs.rmdirSync(dir);
+});
+
+test`write stuff to a network socket`(done => {
+  const server = net.createServer(async socket => {
+    const chunks = [];
+    for await (const chunk of socket) {
+      chunks.push(chunk);
+    }
+    assert.strictEqual(
+      Buffer.concat(chunks).toString('utf8'),
+      'hello world\ngoodbye world\nhello world\ngoodbye world\n');
+    server.close();
+    done();
+  }).listen(0, () => {
+    const port = server.address().port;
+    const socket = net.connect(port, async () => {
+      await aWritev(socket._handle.fd, helloWorld, 0);
+      await aWritev(socket._handle.fd, goodbyeWorld, 0);
+      await Promise.all([
+        aWritev(socket._handle.fd, helloWorld, 0),
+        aWritev(socket._handle.fd, goodbyeWorld, 0)
+      ]);
+      socket.end();
+    })
+  });
 });
 
 test`error case`(() => {
