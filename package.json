@@ -4,6 +4,8 @@
   "description": "A super-fast implementation of writev",
   "main": "index.js",
   "scripts": {
+    "preinstall": "cd deps/liburing && make config-host.mak && make -C src",
+    "install": "node-gyp rebuild",
     "test": "node test"
   },
   "repository": {
