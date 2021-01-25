@@ -6,6 +6,7 @@
   "scripts": {
     "preinstall": "cd deps/liburing && make config-host.mak && make -C src",
     "install": "node-gyp rebuild",
+    "compile_commands": "node-gyp -- configure -f \"gyp.generator.compile_commands_json.py\"",
     "test": "node test"
   },
   "repository": {

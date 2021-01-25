@@ -20,6 +20,7 @@ const aWritev = (...args) => new Promise((resolve, reject) => {
 test`write stuff to a file`(async () => {
   const dir = fs.mkdtempSync('/tmp/fast-writev-');
   const filename = path.join(dir, 'out.txt');
+  console.log(filename)
 
   const fd = fs.openSync(filename, 'w');
   const result = await aWritev(fd, helloWorld);
@@ -31,7 +32,7 @@ test`write stuff to a file`(async () => {
   fs.rmdirSync(dir);
 });
 
-test`write stuff twice to a file`(async () => {
+test.only`write stuff twice to a file`(async () => {
   const dir = fs.mkdtempSync('/tmp/fast-writev-');
   const filename = path.join(dir, 'out.txt');
 

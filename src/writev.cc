@@ -1,3 +1,4 @@
+#include "liburing/io_uring.h"
 #include "v8.h"
 #include <bits/stdint-uintn.h>
 #include <node.h>
@@ -10,18 +11,7 @@ using namespace v8;
 
 namespace writev_addon {
 
-  #pragma pack(1)
-  struct js_submission {
-    uint32_t fd;
-    uint32_t cbId;
-    uint32_t count;
-    int32_t offset;
-  };
-
-  uint64_t * uvBufsBuffer;
-  uint32_t * submissionsBuffer;
   uint32_t * pendingSubs;
-  struct js_submission * subs;
   int32_t * resultBuffer;
 
   Eternal<Function> * callback;
@@ -34,15 +24,23 @@ namespace writev_addon {
   static unsigned pending = 0;
 
 
-  // (callback, uvBufsBuffer, uvBufLensBuffer, submissionsBuffer, resultBuffer): void
+  // (callback, pendingSubs, resultBuffer): [ring_ptr, sq, sqes, sizeof(sqe)]
   void setup(const FunctionCallbackInfo<Value>& args) {
     Local<Context> context = isolate->GetCurrentContext();
     Local<Function> localCallback = Local<Function>::Cast(args[0]);
     callback = new Eternal<Function>(isolate, localCallback);
-    uvBufsBuffer = (uint64_t *)node::Buffer::Data(args[1]->ToObject(context).ToLocalChecked());
-    pendingSubs = (uint32_t *)node::Buffer::Data(args[2]->ToObject(context).ToLocalChecked());
-    subs = (struct js_submission *)(pendingSubs + 1);
-    resultBuffer = (int32_t *)node::Buffer::Data(args[3]->ToObject(context).ToLocalChecked());
+    pendingSubs = (uint32_t *)node::Buffer::Data(args[1]->ToObject(context).ToLocalChecked());
+    resultBuffer = (int32_t *)node::Buffer::Data(args[2]->ToObject(context).ToLocalChecked());
+    HandleScope scope(isolate);
+
+    Local<Value> rets [4] = {
+      node::Buffer::New(isolate, (char*)ring.sq.ring_ptr, ring.sq.ring_sz).ToLocalChecked(),
+      node::Buffer::New(isolate, (char*)(&ring.sq), 640).ToLocalChecked(),
+      node::Buffer::New(isolate, (char*)ring.sq.sqes, 1024 * sizeof(struct io_uring_sqe)).ToLocalChecked(),
+      Number::New(isolate, sizeof(struct io_uring_sqe))
+    };
+    auto retVal = Array::New(isolate, rets, 4);
+    args.GetReturnValue().Set(retVal);
   }
 
   void getPtr(const FunctionCallbackInfo<Value>& args) {
@@ -82,26 +80,23 @@ namespace writev_addon {
 
   }
 
-  inline void doWrite(js_submission * sub, uint32_t bufferOffset) {
-    iovec * iovs = (iovec *)&uvBufsBuffer[bufferOffset];
-
-    io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-    io_uring_prep_writev(sqe, sub->fd, iovs, sub->count, sub->offset);
-    uint64_t cbIdPtr = sub->cbId;
-    io_uring_sqe_set_data(sqe, (void *)cbIdPtr);
-
-    pending++;
-  }
-
   void checkForSubmissions(uv_prepare_t* handle) {
-
-    uint32_t bufferOffset = 0;
     if (*pendingSubs > 0) {
-      for (uint32_t i = 0; i < *pendingSubs; i++) {
-        struct js_submission * sub = subs + i;
-        doWrite(sub, bufferOffset);
-        bufferOffset += sub->count * 2;
-      }
+      // std::cout << "IN CPP::\n";
+      // std::cout << "sqe ptr: " << (uint64_t)ring.sq.sqes << "\n";
+      // std::cout << "opcode: " << (unsigned)ring.sq.sqes->opcode << "\n";
+      // std::cout << "flags: " << (unsigned)ring.sq.sqes->flags << "\n";
+      // std::cout << "ioprio: " << (unsigned)ring.sq.sqes->ioprio << "\n";
+      // std::cout << "fd: " << (signed)ring.sq.sqes->fd << "\n";
+      // std::cout << "off: " << (off_t)ring.sq.sqes->off << "\n";
+      // std::cout << "addr: " << (uint64_t)ring.sq.sqes->addr << "\n";
+      // std::cout << "addr: " << (unsigned long)ring.sq.sqes->addr << "\n";
+      // iovec * vec = (iovec *)ring.sq.sqes->addr;
+      // std::string myString0((char*)vec->iov_base, vec->iov_len);
+      // std::cout << myString0 << "\n";
+      // std::cout << "len: " << (uint32_t)ring.sq.sqes->len << "\n";
+      // std::cout << "rw_flags: " << (uint32_t)ring.sq.sqes->rw_flags << "\n";
+      // std::cout << "user_data: " << (uint64_t)ring.sq.sqes->user_data << "\n";
       int ret = io_uring_submit(&ring);
       if (ret < 0) {
         fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
